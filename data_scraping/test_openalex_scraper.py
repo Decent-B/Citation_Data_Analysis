@@ -26,15 +26,15 @@ def show_sample(conn, n=10):
     sample_rows = random.sample(rows, min(n, len(rows)))
     for i, row in enumerate(sample_rows, 1):
         print(f"\n--- Sample #{i} ---")
-        print(f"id: {row['id']}")
-        print(f"doi: {row['doi']}")
-        print(f"apc_list_price: {row['apc_list_price']}")
-        print(f"topic: {row['topic']}")
-        print(f"referenced_works_count: {row['referenced_works_count']}")
-        print(f"referenced_works: {row['referenced_works']}")
-        print(f"authors: {row['authors']}")
-        print(f"publication_date: {row['publication_date']}")
-        print(f"cited_by_count: {row['cited_by_count']}")
+        print(f"id: {row['id']}")                                           # OpenAlex work ID (e.g., W1976841490)
+        print(f"doi: {row['doi']}")                                         # DOI of the work (if available)
+        print(f"apc_list_price: {row['apc_list_price']}")                   # Article Processing Charge list price (if available in USD)
+        print(f"topic: {row['topic']}")                                     # Topic of the work (if available)
+        print(f"referenced_works_count: {row['referenced_works_count']}")   # Number of works referenced by this work
+        print(f"referenced_works: {row['referenced_works']}")               # List of referenced work IDs
+        print(f"authors: {row['authors']}")                                 # List of author IDs
+        print(f"publication_date: {row['publication_date']}")               # Publication date of the work (ISO 8601 format)
+        print(f"cited_by_count: {row['cited_by_count']}")                   # Number of times this work has been cited
 
 
 def main():
