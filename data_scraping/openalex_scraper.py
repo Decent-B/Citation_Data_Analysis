@@ -11,7 +11,7 @@ FIELDS = ["id", "doi", "apc_list_price", "topic",
           "referenced_works_count", "referenced_works",
           "authors", "cited_by_count", "publication_date"]
 
-PER_PAGE = 200
+PER_PAGE_MAX = 200
 BUFFER_LIMIT = 5000  # number of works to buffer before flush
 CURSOR_FILE = "cursor_state.json"
 DB_FILE = "openalex_works.db"
@@ -78,18 +78,20 @@ def insert_batch(conn:sqlite3.Connection, batch):
 # --- worker threads ---
 def fetcher(q):
     cursor = load_cursor()
+    per_page = PER_PAGE_MAX
     while not stop_scraping:
         print(f"Fetching works with cursor: {cursor}")
-        params = {"per-page": PER_PAGE, "cursor": cursor}
+        params = {"per-page": per_page, "cursor": cursor}
         try:
             r = requests.get(API_URL, params=params, timeout=60)
             r.raise_for_status()
             data = r.json()
         except Exception as e:
             print("Fetch error:", e)
+            per_page -= 1
             time.sleep(10)
             continue
-
+        
         works = data.get("results", [])
         next_cursor = data["meta"].get("next_cursor")
 
@@ -100,6 +102,8 @@ def fetcher(q):
         q.put((works, next_cursor))
         save_cursor(next_cursor)
         cursor = next_cursor
+        
+        per_page = PER_PAGE_MAX  # reset per_page on success
 
         time.sleep(0.001)  # gentle delay to avoid hammering API
 
@@ -122,7 +126,7 @@ def processor(q, conn):
     buffer = []
     number_processed = 0
     while True:
-        print(f"{number_processed * PER_PAGE} works processed.")
+        print(f"{number_processed * PER_PAGE_MAX} works processed.")
         item = q.get()
         if item is None:
             if buffer:
