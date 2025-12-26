@@ -7,9 +7,9 @@ import sqlite3
 import signal
 
 API_URL = "https://api.openalex.org/works"
-FIELDS = ["id", "doi", "apc_list_price", "topic",
+FIELDS = ["id", "doi", "title", "apc_list_price", "topic", "topic_name",
           "referenced_works_count", "referenced_works",
-          "authors", "cited_by_count", "publication_date"]
+          "authors", "cited_by_count", "publication_date", "related_works"]
 
 PER_PAGE = 200
 BUFFER_LIMIT = 5000  # number of works to buffer before flush
@@ -50,13 +50,16 @@ def init_db():
         CREATE TABLE IF NOT EXISTS works (
             id TEXT PRIMARY KEY,
             doi TEXT,
+            title TEXT,
             apc_list_price INTEGER,
             topic TEXT,
+            topic_name TEXT,
             referenced_works_count INTEGER,
             referenced_works TEXT,
             authors TEXT,
             cited_by_count INTEGER,
-            publication_date TEXT
+            publication_date TEXT,
+            related_works TEXT
         )
     """)
     conn.commit()
@@ -67,10 +70,10 @@ def insert_batch(conn:sqlite3.Connection, batch):
     cur = conn.cursor()
     _ = cur.executemany("""
         INSERT OR REPLACE INTO works
-        (id, doi, apc_list_price, topic,
+        (id, doi, title, apc_list_price, topic, topic_name,
          referenced_works_count, referenced_works,
-         authors, cited_by_count, publication_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         authors, cited_by_count, publication_date, related_works)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, batch)
     conn.commit()
 
@@ -133,16 +136,20 @@ def processor(q, conn):
         works, cursor = item # pyright: ignore[reportUnusedVariable]
         for w in works:
             # Trick to handle nested dictionaries: result = (inner_dict := a.get('key1')) and inner_dict.get('key2') => This will return None if any key is missing, else a['key1']['key2']
+            primary_topic = w.get("primary_topic")
             row = [
                 w.get("id") and w.get("id")[21:],  # strip prefix
                 w.get("doi") and w.get("doi")[16:], # strip prefix
+                w.get("title"),
                 (apc_list_price := w.get("apc_list")) and apc_list_price.get("value_usd"),
-                (primary_topic := w.get("primary_topic")) and primary_topic.get("id") and primary_topic.get("id")[21:], # strip prefix
+                primary_topic and primary_topic.get("id") and primary_topic.get("id")[21:], # strip prefix
+                primary_topic and primary_topic.get("display_name"),  # topic name
                 w.get("referenced_works_count"),
                 json.dumps(w.get("referenced_works") and [rw[21:] for rw in w.get("referenced_works")]),
                 json.dumps(w.get("authorships") and process_authors(w.get("authorships"))),
                 w.get("cited_by_count"),
-                w.get("publication_date") # ISO 8601 string
+                w.get("publication_date"), # ISO 8601 string
+                json.dumps(w.get("related_works") and [rw[21:] for rw in w.get("related_works")]),
             ]
             buffer.append(row)
 
