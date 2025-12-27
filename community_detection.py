@@ -565,6 +565,13 @@ Examples:
     )
     
     parser.add_argument(
+        "--db-path",
+        type=str,
+        default=str(DB_FILE),
+        help=f"Path to SQLite database (default: {DB_FILE})"
+    )
+    
+    parser.add_argument(
         "--topic", "-t",
         type=str,
         default=None,
@@ -608,9 +615,12 @@ Examples:
     # Handle largest component flag
     largest_component = args.largest_component and not args.no_largest_component
     
+    # Resolve database path
+    db_path = Path(args.db_path)
+    
     # Check database exists
-    if not DB_FILE.exists():
-        print(f"❌ Database not found: {DB_FILE}")
+    if not db_path.exists():
+        print(f"❌ Database not found: {db_path}")
         print("   Run the OpenAlex scraper first: python data_scraping/openalex_scraper.py")
         import sys
         sys.exit(1)
@@ -620,13 +630,14 @@ Examples:
     print("=" * 60)
     
     # Load papers
-    print(f"\n📚 Loading papers from {DB_FILE}...")
+    print(f"\n📚 Loading papers from {db_path}...")
     if args.topic:
         print(f"   Filtering by topic: {args.topic}")
     if args.limit:
         print(f"   Limiting to {args.limit} papers")
     
     papers_df = load_papers_with_citations(
+        db_path=db_path,
         topic_filter=args.topic,
         limit=args.limit
     )

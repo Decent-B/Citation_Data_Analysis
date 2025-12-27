@@ -58,6 +58,9 @@ python community_detection.py
 # Quick test on 200 papers
 python community_detection.py --limit 200 --test
 
+# Custom database path
+python community_detection.py --db-path /path/to/custom/works.db
+
 # Custom parameters
 python community_detection.py --max-levels 100 --max-nodes 5000
 
