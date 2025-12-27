@@ -1,4 +1,8 @@
-"""Community detection tab UI implementation."""
+"""Community detection tab UI implementation.
+
+This module handles loading and visualizing pre-computed community detection results.
+The actual algorithms are implemented in community_detection.py (root level).
+"""
 
 import streamlit as st
 import pandas as pd
@@ -134,9 +138,16 @@ def create_community_graph(communities_df: pd.DataFrame, papers_df: pd.DataFrame
     
     return html_content
 
+
 def render_community_tab(papers_df: pd.DataFrame):
     """
     Render the community detection tab interface.
+    
+    This tab loads pre-computed community detection results from CSV files.
+    To generate new results, run the community_detection.py script:
+        python community_detection.py
+    Or use the CLI script:
+        python scripts/run_community_detection.py --algorithm gn
     
     Args:
         papers_df: Pre-loaded papers metadata DataFrame
@@ -146,13 +157,31 @@ def render_community_tab(papers_df: pd.DataFrame):
     algorithm = st.selectbox(
         "Community Detection Algorithm",
         ["Girvan-Newman", "Kernighan-Lin", "Louvain"],
-        help="Select the algorithm to use for community detection"
+        help="Select the algorithm to load results for"
     )
     
-    # Detect button
-    if st.button("🔍 Detect Communities", type="primary"):
-        with st.spinner(f"Running {algorithm} community detection..."):
-            # Load community data and edges
+    # Info about how to generate results
+    with st.expander("ℹ️ How to generate community detection results", expanded=False):
+        st.markdown("""
+        Community detection results must be pre-computed using the command line:
+        
+        **Girvan-Newman:**
+        ```bash
+        python community_detection.py
+        # Or with options:
+        python community_detection.py --max-levels 50 --limit 500
+        ```
+        
+        **Expected output files:**
+        - `data/communities_gn.csv` - Girvan-Newman results
+        - `data/communities_kl.csv` - Kernighan-Lin results  
+        - `data/communities_louvain.csv` - Louvain results
+        - `data/edges.csv` - Citation edges for visualization
+        """)
+    
+    # Load button
+    if st.button("🔍 Load Communities", type="primary"):
+        with st.spinner(f"Loading {algorithm} community data..."):
             communities_df = load_communities(algorithm)
             
             if communities_df is None:
@@ -161,55 +190,55 @@ def render_community_tab(papers_df: pd.DataFrame):
                     f"- `data/communities_gn.csv` (Girvan-Newman)\n"
                     f"- `data/communities_kl.csv` (Kernighan-Lin)\n"
                     f"- `data/communities_louvain.csv` (Louvain)\n"
-                    f"- `data/communities.csv` (fallback)"
+                    f"- `data/communities.csv` (fallback)\n\n"
+                    f"Run `python community_detection.py` to generate results."
                 )
                 return
             
-            # papers_df is already passed in as parameter
             edges_df = load_edges()
+        
+        # Check for required columns
+        if 'id' not in communities_df.columns or 'community' not in communities_df.columns:
+            st.error("❌ Community CSV must have 'id' and 'community' columns")
+            return
+        
+        if 'id' not in papers_df.columns:
+            st.error("❌ Papers metadata (data/openalex_works.db) must have 'id' column")
+            return
+        
+        # Limit graph size for performance
+        MAX_VIS_NODES = 1000
+        if len(communities_df) > MAX_VIS_NODES:
+            st.warning(f"⚠️ Graph has {len(communities_df)} nodes. Sampling {MAX_VIS_NODES} for visualization.")
+            communities_df = communities_df.sample(n=MAX_VIS_NODES, random_state=42)
+        
+        # Community statistics
+        community_counts = Counter(communities_df['community'])
+        num_communities = len(community_counts)
+        
+        st.success(f"✅ Loaded {num_communities} communities from {len(communities_df)} papers")
+        
+        # Summary panel
+        with st.expander("📊 Community Summary", expanded=True):
+            col1, col2 = st.columns(2)
             
-            # Check for required columns
-            if 'id' not in communities_df.columns or 'community' not in communities_df.columns:
-                st.error("❌ Community CSV must have 'id' and 'community' columns")
-                return
+            with col1:
+                st.metric("Total Communities", num_communities)
+                st.metric("Total Papers", len(communities_df))
             
-            if 'id' not in papers_df.columns:
-                st.error("❌ Papers metadata (data/openalex_works.db) must have 'id' column")
-                return
-            
-            # Limit graph size for performance
-            MAX_NODES = 1000
-            if len(communities_df) > MAX_NODES:
-                st.warning(f"⚠️ Graph has {len(communities_df)} nodes. Sampling {MAX_NODES} for visualization.")
-                communities_df = communities_df.sample(n=MAX_NODES, random_state=42)
-            
-            # Community statistics
-            community_counts = Counter(communities_df['community'])
-            num_communities = len(community_counts)
-            
-            st.success(f"✅ Detected {num_communities} communities from {len(communities_df)} papers")
-            
-            # Summary panel
-            with st.expander("📊 Community Summary", expanded=True):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.metric("Total Communities", num_communities)
-                    st.metric("Total Papers", len(communities_df))
-                
-                with col2:
-                    top_communities = community_counts.most_common(10)
-                    st.markdown("**Top 10 Largest Communities:**")
-                    for comm, count in top_communities:
-                        st.text(f"Community {comm}: {count} papers")
-            
-            # Create and display graph
-            st.markdown("### 🌐 Community Graph Visualization")
-            st.info("💡 Hover over nodes to see paper details (title, DOI, date)")
-            
-            try:
-                html_content = create_community_graph(communities_df, papers_df, edges_df)
-                st.components.v1.html(html_content, height=750, scrolling=True)
-            except Exception as e:
-                st.error(f"❌ Error creating visualization: {str(e)}")
-                st.exception(e)
+            with col2:
+                top_communities = community_counts.most_common(10)
+                st.markdown("**Top 10 Largest Communities:**")
+                for comm, count in top_communities:
+                    st.text(f"Community {comm}: {count} papers")
+        
+        # Create and display graph
+        st.markdown("### 🌐 Community Graph Visualization")
+        st.info("💡 Hover over nodes to see paper details (title, DOI, date)")
+        
+        try:
+            html_content = create_community_graph(communities_df, papers_df, edges_df)
+            st.components.v1.html(html_content, height=750, scrolling=True)
+        except Exception as e:
+            st.error(f"❌ Error creating visualization: {str(e)}")
+            st.exception(e)

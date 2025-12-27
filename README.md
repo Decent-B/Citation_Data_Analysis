@@ -39,9 +39,49 @@ The UI provides two main features:
 
 ### 🌐 Community Detection Tab
 - Run community detection algorithms (Girvan-Newman, Kernighan-Lin, Louvain)
+- **Girvan-Newman**: Can run live in the UI or load pre-computed CSV
 - Visualize paper communities in an interactive graph
 - Hover over nodes to see paper details
 - View community statistics and sizes
+
+## Girvan-Newman Community Detection
+
+The Girvan-Newman algorithm is implemented in `community_detection.py` (separate from the UI).
+The algorithm is run via command line to generate CSV files, which are then loaded by the Streamlit UI for visualization.
+
+### Via Command Line
+
+```bash
+# Run with defaults
+python community_detection.py
+
+# Quick test on 200 papers
+python community_detection.py --limit 200 --test
+
+# Custom parameters
+python community_detection.py --max-levels 100 --max-nodes 5000
+
+# Filter by topic
+python community_detection.py --topic T10181
+
+# Verbose output
+python community_detection.py --verbose
+```
+
+### Via Streamlit UI
+
+After running the algorithm via command line, the results can be visualized in the UI:
+1. Go to the "Community Detection" tab
+2. Select "Girvan-Newman" algorithm
+3. Click "🔍 Load Communities"
+
+### Algorithm Details
+
+- Uses NetworkX's `girvan_newman` implementation
+- Selects best partition by maximizing **modularity**
+- Builds **undirected** citation graph from `referenced_works`
+- Handles disconnected graphs by extracting largest component
+- Outputs: `data/communities_gn.csv`, `data/edges.csv`, `data/communities_gn_meta.json`
 
 ## Data Files
 
@@ -90,11 +130,12 @@ See `citation_pagerank.ipynb` for examples of:
 ```
 .
 ├── app.py                      # Streamlit UI entry point
-├── ui/                         # UI components
+├── community_detection.py     # Girvan-Newman algorithm (CLI + library)
+├── ui/                         # UI components (CSV loading & visualization only)
 │   ├── search_tab.py          # Search interface
-│   ├── community_tab.py       # Community detection interface
+│   ├── community_tab.py       # Community detection visualization
 │   ├── search.py              # Search algorithms
-│   └── data_access.py         # Data loading utilities (SQLite)
+│   └── data_access.py         # Data loading utilities (SQLite, CSV)
 ├── data_scraping/             # OpenAlex scraper
 │   ├── openalex_scraper.py   # Main scraper
 │   └── utils.py              # Helper functions (API calls)
