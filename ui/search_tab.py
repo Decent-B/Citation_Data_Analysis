@@ -1,45 +1,49 @@
 """Search tab UI implementation."""
 
 import streamlit as st
-from ui.data_access import load_papers_metadata, get_papers_by_ids
+import pandas as pd
+from ui.data_access import get_papers_by_ids
 from ui.search import run_search
 
-def render_search_tab():
-    """Render the search tab interface."""
+def render_search_tab(papers_df: pd.DataFrame):
+    """
+    Render the search tab interface.
+    
+    Args:
+        papers_df: Pre-loaded papers metadata DataFrame
+    """
     
     # Initialize session state
     if 'search_results' not in st.session_state:
         st.session_state.search_results = None
     
-    # Load papers metadata
-    papers_df = load_papers_metadata()
-    
-    # Search controls
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        algorithm = st.selectbox(
-            "Search Algorithm",
-            ["BM25", "PageRank + BM25", "HITS"],
-            help="Select the search algorithm to use"
-        )
-    
-    with col2:
-        k = st.number_input(
-            "Top-K Results",
-            min_value=1,
-            max_value=100,
-            value=10,
-            help="Number of results to return"
-        )
-    
-    # Search form
+    # Search form with all controls inside
     with st.form(key="search_form"):
         query = st.text_input(
             "Search Query",
             placeholder="Enter keywords to search papers...",
             help="Press Enter or click Search to submit"
         )
+        
+        # Search controls
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            algorithm = st.selectbox(
+                "Search Algorithm",
+                ["BM25", "PageRank + BM25", "HITS"],
+                help="Select the search algorithm to use"
+            )
+        
+        with col2:
+            k = st.number_input(
+                "Top-K Results",
+                min_value=1,
+                max_value=100,
+                value=10,
+                help="Number of results to return"
+            )
+        
         submit = st.form_submit_button("🔍 Search")
     
     # Process search

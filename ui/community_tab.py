@@ -7,9 +7,10 @@ from pyvis.network import Network
 import tempfile
 from pathlib import Path
 from collections import Counter
-from ui.data_access import load_papers_metadata, load_communities, load_edges
+from typing import Optional
+from ui.data_access import load_communities, load_edges
 
-def create_community_graph(communities_df: pd.DataFrame, papers_df: pd.DataFrame, edges_df: pd.DataFrame = None):
+def create_community_graph(communities_df: pd.DataFrame, papers_df: pd.DataFrame, edges_df: Optional[pd.DataFrame] = None):
     """
     Create an interactive community graph visualization using PyVis.
     
@@ -133,8 +134,13 @@ def create_community_graph(communities_df: pd.DataFrame, papers_df: pd.DataFrame
     
     return html_content
 
-def render_community_tab():
-    """Render the community detection tab interface."""
+def render_community_tab(papers_df: pd.DataFrame):
+    """
+    Render the community detection tab interface.
+    
+    Args:
+        papers_df: Pre-loaded papers metadata DataFrame
+    """
     
     # Algorithm selection
     algorithm = st.selectbox(
@@ -146,7 +152,7 @@ def render_community_tab():
     # Detect button
     if st.button("🔍 Detect Communities", type="primary"):
         with st.spinner(f"Running {algorithm} community detection..."):
-            # Load data
+            # Load community data and edges
             communities_df = load_communities(algorithm)
             
             if communities_df is None:
@@ -159,7 +165,7 @@ def render_community_tab():
                 )
                 return
             
-            papers_df = load_papers_metadata()
+            # papers_df is already passed in as parameter
             edges_df = load_edges()
             
             # Check for required columns
