@@ -12,7 +12,6 @@ wheels/
 # Folders
 data/
 cugraph_tutorial/
-results/
 
 # Data
 *.db

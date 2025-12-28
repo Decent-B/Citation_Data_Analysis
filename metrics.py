@@ -989,20 +989,6 @@ if __name__ == "__main__":
         "T14380", "T10712", "T13673", "T13166", "T12289", "T12863", "T10102", "T13976",
     ]
     preds_path = Path("results/checkpoint_level_10.csv")
-    # ground_truth_path = Path("results/ground_truth_communities.csv")
+    ground_truth_path = Path("results/ground_truth_300_paper_per_topic.csv")
     
-    # results = calculate_external_indices(preds_path, ground_truth_path, verbose=True)
-
-    # Calculate full internal metrics by loading the graph (5.4M edges)
-    print("Loading edges from database...")
-    from utils import extract_edges_from_db
-    
-    edges_df = extract_edges_from_db(topics=TARGET_TOPICS_DEFAULT, verbose=True)
-    
-    print("\nCalculating internal indices...")
-    
-    results = calculate_internal_indices_from_dataframe(
-        preds_path,
-        edges_df,
-        verbose=True
-    )
+    results = calculate_external_indices(preds_path, ground_truth_path, verbose=True)
