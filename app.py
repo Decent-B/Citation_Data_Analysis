@@ -40,7 +40,7 @@ def main():
     with col1:
         st.metric("Total Papers", f"{len(papers_df):,}")
     with col2:
-        st.metric("Data Source", "SQLite DB" if len(papers_df) > 3 else "Placeholder")
+        st.metric("Data Source", "PostgreSQL" if len(papers_df) > 3 else "Placeholder")
     
     st.markdown("---")
     

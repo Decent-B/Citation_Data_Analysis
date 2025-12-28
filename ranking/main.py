@@ -41,10 +41,9 @@ if __name__ == '__main__':
     results_dir = 'results'
     os.makedirs(results_dir, exist_ok=True)
     
-    # Load data
+    # Load data from PostgreSQL (topics are loaded via environment-configured connection)
     topic_df, edges_df, G_gpu, vid_df = build_cugraph(
-        'data/openalex_works-ver2.db', 
-        ['T10078', 'T10001', 'T10018', 'T10030', 'T10017']
+        target_topics=['T10078', 'T10001', 'T10018', 'T10030', 'T10017']
     )
     
     # Track PageRank convergence
