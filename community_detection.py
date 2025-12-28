@@ -5,6 +5,7 @@ This module provides utilities for building citation graphs from the SQLite data
 and running community detection algorithms (primarily Girvan-Newman).
 """
 
+import gc
 import json
 import sqlite3
 import time
@@ -15,6 +16,27 @@ from typing import Callable, Iterator
 
 import networkx as nx
 import pandas as pd
+
+# Try to import psutil for memory monitoring
+try:
+    import psutil as _psutil
+    HAS_PSUTIL = True
+except ImportError:
+    _psutil = None  # type: ignore
+    HAS_PSUTIL = False
+
+
+def get_memory_mb() -> float:
+    """Get current memory usage in MB."""
+    if HAS_PSUTIL and _psutil is not None:
+        return _psutil.Process().memory_info().rss / 1024 / 1024
+    return 0.0
+
+
+def print_memory(prefix: str = "") -> None:
+    """Print current memory usage."""
+    if HAS_PSUTIL:
+        print(f"{prefix}💾 Memory: {get_memory_mb():.0f} MB")
 
 DATA_DIR = Path("data")
 DB_FILE = DATA_DIR / "openalex_works.db"
@@ -119,6 +141,56 @@ def load_papers_with_citations(
         df = pd.read_sql_query(query, conn)
         df['id'] = df['id'].astype(str)
         df['referenced_works_parsed'] = df['referenced_works'].apply(parse_referenced_works)
+        
+        return df
+    finally:
+        conn.close()
+
+
+def load_papers_by_topics(
+    db_path: Path | str,
+    topics: list[str],
+    papers_per_topic: int = 2000
+) -> pd.DataFrame:
+    """
+    Load papers for multiple topics with a limit per topic.
+    
+    Uses SQL window function to efficiently limit papers per topic,
+    ordered by cited_by_count (most cited first).
+    
+    Args:
+        db_path: Path to the SQLite database file.
+        topics: List of topic IDs to load.
+        papers_per_topic: Maximum papers to load per topic.
+        
+    Returns:
+        DataFrame with columns: id, topic, referenced_works_parsed.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database not found: {db_path}")
+    
+    conn = sqlite3.connect(str(db_path))
+    try:
+        # Create placeholders for the IN clause
+        placeholders = ', '.join(['?' for _ in topics])
+        
+        # Use window function to limit papers per topic
+        query = f"""
+            SELECT id, topic, referenced_works
+            FROM (
+                SELECT id, topic, referenced_works,
+                       ROW_NUMBER() OVER (PARTITION BY topic ORDER BY cited_by_count DESC) as row_num
+                FROM works
+                WHERE topic IN ({placeholders})
+            )
+            WHERE row_num <= ?
+        """
+        
+        df = pd.read_sql_query(query, conn, params=(*topics, papers_per_topic))
+        df['id'] = df['id'].astype(str)
+        df['referenced_works_parsed'] = df['referenced_works'].apply(parse_referenced_works)
+        df = df.drop(columns=['referenced_works'])  # Free memory
         
         return df
     finally:
@@ -535,11 +607,14 @@ Examples:
   # Quick test on 200 papers
   python community_detection.py --limit 200 --test
   
-  # Custom parameters
-  python community_detection.py --max-levels 100 --max-nodes 5000
-  
-  # Filter by topic
+  # Single topic
   python community_detection.py --topic T10181
+  
+  # Multiple topics (comma-separated)
+  python community_detection.py --topics T10181,T10036,T10320
+  
+  # Process topics in batches (memory-efficient)
+  python community_detection.py --topics T10181,T10036,T10320 --batch-size 3 --papers-per-topic 1000
         """
     )
     
@@ -575,7 +650,28 @@ Examples:
         "--topic", "-t",
         type=str,
         default=None,
-        help="Filter papers by topic ID (e.g., T10181)"
+        help="Filter papers by single topic ID (e.g., T10181)"
+    )
+    
+    parser.add_argument(
+        "--topics",
+        type=str,
+        default=None,
+        help="Comma-separated list of topic IDs (e.g., T10181,T10036,T10320)"
+    )
+    
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=5,
+        help="Number of topics to process per batch (default: 5)"
+    )
+    
+    parser.add_argument(
+        "--papers-per-topic",
+        type=int,
+        default=2000,
+        help="Max papers to load per topic (default: 2000)"
     )
     
     parser.add_argument(
@@ -628,122 +724,251 @@ Examples:
     print("=" * 60)
     print("Girvan-Newman Community Detection")
     print("=" * 60)
+    print_memory("Initial ")
     
-    # Load papers
-    print(f"\n📚 Loading papers from {db_path}...")
-    if args.topic:
-        print(f"   Filtering by topic: {args.topic}")
-    if args.limit:
-        print(f"   Limiting to {args.limit} papers")
+    # Parse topics list
+    topic_list = []
+    if args.topics:
+        topic_list = [t.strip() for t in args.topics.split(',') if t.strip()]
+    elif args.topic:
+        topic_list = [args.topic]
     
-    papers_df = load_papers_with_citations(
-        db_path=db_path,
-        topic_filter=args.topic,
-        limit=args.limit
-    )
-    print(f"   Loaded {len(papers_df)} papers")
-    
-    if len(papers_df) == 0:
-        print("❌ No papers found!")
-        import sys
-        sys.exit(1)
-    
-    # Build graph
-    print("\n🔗 Building citation graph...")
-    G = build_citation_graph(papers_df, undirected=True)
-    print(f"   Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-    
-    # Largest component
-    if largest_component:
-        print("\n📊 Extracting largest connected component...")
-        G = get_largest_connected_component(G)
-        print(f"   Component: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-    
-    # Sample if needed
-    if G.number_of_nodes() > args.max_nodes:
-        print(f"\n⚠️  Graph exceeds {args.max_nodes} nodes, sampling...")
-        import random
-        random.seed(42)
-        sampled_nodes = random.sample(list(G.nodes()), args.max_nodes)
-        G = G.subgraph(sampled_nodes).copy()
-        print(f"   Sampled: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-    
-    graph_nodes = set(G.nodes())
-    
-    # Run Girvan-Newman
-    print(f"\n🔬 Running Girvan-Newman (max {args.max_levels} levels)...")
-    
-    def progress_callback(level, num_communities, modularity):
-        if args.verbose or level % 10 == 0:
-            print(f"   Level {level}: {num_communities} communities, modularity={modularity:.4f}")
-    
-    result = detect_girvan_newman_best_modularity(
-        G,
-        max_levels=args.max_levels,
-        progress_callback=progress_callback
-    )
-    
-    print(f"\n✅ Completed in {result.elapsed_seconds:.1f} seconds")
-    print(f"   Levels evaluated: {result.levels_evaluated}")
-    print(f"   Best modularity: {result.modularity:.4f}")
-    print(f"   Communities found: {result.num_communities}")
-    
-    # Convert to DataFrame
-    communities_df = partition_to_communities_df(result.partition, G)
-    
-    # Build edges DataFrame
-    papers_in_graph = papers_df[papers_df['id'].isin(graph_nodes)]
-    edges_df = build_edges_dataframe(papers_in_graph)
-    
-    # Validate if requested
-    if args.test:
-        print("\n📋 Validating output...")
-        errors = []
+    # If we have multiple topics, process in batches
+    if len(topic_list) > 1:
+        print(f"\n📋 Processing {len(topic_list)} topics in batches of {args.batch_size}")
+        print(f"   Papers per topic: {args.papers_per_topic}")
         
-        # Check for duplicates
-        if communities_df['id'].duplicated().any():
-            dup_count = communities_df['id'].duplicated().sum()
-            errors.append(f"Found {dup_count} duplicate IDs")
+        all_results = []
         
-        # Check all graph nodes are present
-        output_ids = set(communities_df['id'])
-        missing = graph_nodes - output_ids
-        if missing:
-            errors.append(f"Missing {len(missing)} node IDs from output")
+        # Split topics into batches
+        for batch_idx in range(0, len(topic_list), args.batch_size):
+            batch_topics = topic_list[batch_idx:batch_idx + args.batch_size]
+            batch_num = batch_idx // args.batch_size + 1
+            total_batches = (len(topic_list) + args.batch_size - 1) // args.batch_size
+            
+            print(f"\n{'='*60}")
+            print(f"BATCH {batch_num}/{total_batches}: {', '.join(batch_topics)}")
+            print(f"{'='*60}")
+            print_memory("Start ")
+            
+            # Load papers for this batch
+            print(f"\n📚 Loading papers for batch...")
+            papers_df = load_papers_by_topics(
+                db_path=db_path,
+                topics=batch_topics,
+                papers_per_topic=args.papers_per_topic
+            )
+            
+            # Print per-topic counts
+            for topic in batch_topics:
+                count = len(papers_df[papers_df['topic'] == topic])
+                print(f"   {topic}: {count} papers")
+            print(f"   Total: {len(papers_df)} papers")
+            
+            if len(papers_df) == 0:
+                print("⚠️ No papers found for this batch, skipping...")
+                continue
+            
+            # Build graph
+            print("\n🔗 Building citation graph...")
+            G = build_citation_graph(papers_df, undirected=True)
+            print(f"   Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+            
+            # Largest component
+            if largest_component:
+                print("   Extracting largest connected component...")
+                G = get_largest_connected_component(G)
+                print(f"   Component: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+            
+            # Sample if needed
+            if G.number_of_nodes() > args.max_nodes:
+                print(f"   ⚠️ Sampling to {args.max_nodes} nodes...")
+                import random
+                random.seed(42)
+                sampled_nodes = random.sample(list(G.nodes()), args.max_nodes)
+                G = G.subgraph(sampled_nodes).copy()
+                print(f"   Sampled: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+            
+            graph_nodes = set(G.nodes())
+            
+            # Run Girvan-Newman
+            print(f"\n🔬 Running Girvan-Newman (max {args.max_levels} levels)...")
+            print_memory("Before GN ")
+            
+            def progress_callback(level, num_communities, modularity):
+                if args.verbose or level % 10 == 0:
+                    print(f"   Level {level}: {num_communities} communities, modularity={modularity:.4f}")
+            
+            result = detect_girvan_newman_best_modularity(
+                G,
+                max_levels=args.max_levels,
+                progress_callback=progress_callback
+            )
+            
+            print(f"\n✅ Batch completed in {result.elapsed_seconds:.1f}s")
+            print(f"   Best modularity: {result.modularity:.4f}")
+            print(f"   Communities found: {result.num_communities}")
+            
+            # Convert to DataFrame
+            communities_df = partition_to_communities_df(result.partition, G)
+            
+            # Build edges DataFrame
+            papers_in_graph = papers_df[papers_df['id'].isin(graph_nodes)]
+            edges_df = build_edges_dataframe(papers_in_graph)
+            
+            # Save batch results
+            batch_name = f"batch_{batch_num}"
+            output_dir = DATA_DIR / "batches"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            output_path = output_dir / f"communities_{batch_name}.csv"
+            save_communities_csv(communities_df, output_path)
+            
+            edges_path = output_dir / f"edges_{batch_name}.csv"
+            save_edges_csv(edges_df, edges_path)
+            
+            meta_path = output_dir / f"metadata_{batch_name}.json"
+            result.parameters['topics'] = batch_topics
+            save_metadata_json(result, meta_path)
+            
+            print(f"💾 Saved to {output_dir}/")
+            
+            all_results.append({
+                'batch': batch_num,
+                'topics': batch_topics,
+                'modularity': result.modularity,
+                'communities': result.num_communities,
+                'nodes': result.num_nodes,
+                'edges': result.num_edges
+            })
+            
+            # CRITICAL: Clean up memory
+            del papers_df, G, communities_df, edges_df, papers_in_graph, result
+            gc.collect()
+            print_memory("After cleanup ")
         
-        # Check community labels are consecutive from 0
-        communities = sorted(communities_df['community'].unique())
-        expected = list(range(len(communities)))
-        if communities != expected:
-            errors.append(f"Community labels not consecutive: got {communities[:10]}...")
+        # Print summary
+        print("\n" + "=" * 60)
+        print("FINAL SUMMARY")
+        print("=" * 60)
+        for r in all_results:
+            print(f"Batch {r['batch']} ({', '.join(r['topics'][:3])}...): "
+                  f"{r['communities']} communities, modularity={r['modularity']:.4f}")
+        print(f"\nAll results saved to: {DATA_DIR / 'batches'}/")
+    
+    else:
+        # Single topic or no topic filter - original behavior
+        print(f"\n📚 Loading papers from {db_path}...")
+        if args.topic:
+            print(f"   Filtering by topic: {args.topic}")
+        if args.limit:
+            print(f"   Limiting to {args.limit} papers")
         
-        if errors:
-            print("❌ Validation failed:")
-            for err in errors:
-                print(f"   - {err}")
+        papers_df = load_papers_with_citations(
+            db_path=db_path,
+            topic_filter=args.topic,
+            limit=args.limit
+        )
+        print(f"   Loaded {len(papers_df)} papers")
+        
+        if len(papers_df) == 0:
+            print("❌ No papers found!")
             import sys
             sys.exit(1)
         
-        print("✅ Validation passed!")
-        print(f"   - {len(communities_df)} unique paper IDs")
-        print(f"   - {len(communities)} communities (0 to {len(communities)-1})")
-    
-    # Save outputs
-    output_path = Path(args.output) if args.output else DATA_DIR / "communities_gn.csv"
-    
-    print(f"\n💾 Saving outputs...")
-    save_communities_csv(communities_df, output_path)
-    print(f"   Communities: {output_path}")
-    
-    edges_path = output_path.parent / "edges.csv"
-    save_edges_csv(edges_df, edges_path)
-    print(f"   Edges: {edges_path}")
-    
-    meta_path = output_path.with_suffix(".json").with_name(
-        output_path.stem + "_meta.json"
-    )
-    save_metadata_json(result, meta_path)
-    print(f"   Metadata: {meta_path}")
+        # Build graph
+        print("\n🔗 Building citation graph...")
+        G = build_citation_graph(papers_df, undirected=True)
+        print(f"   Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        
+        # Largest component
+        if largest_component:
+            print("\n📊 Extracting largest connected component...")
+            G = get_largest_connected_component(G)
+            print(f"   Component: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        
+        # Sample if needed
+        if G.number_of_nodes() > args.max_nodes:
+            print(f"\n⚠️  Graph exceeds {args.max_nodes} nodes, sampling...")
+            import random
+            random.seed(42)
+            sampled_nodes = random.sample(list(G.nodes()), args.max_nodes)
+            G = G.subgraph(sampled_nodes).copy()
+            print(f"   Sampled: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        
+        graph_nodes = set(G.nodes())
+        
+        # Run Girvan-Newman
+        print(f"\n🔬 Running Girvan-Newman (max {args.max_levels} levels)...")
+        
+        def progress_callback(level, num_communities, modularity):
+            if args.verbose or level % 10 == 0:
+                print(f"   Level {level}: {num_communities} communities, modularity={modularity:.4f}")
+        
+        result = detect_girvan_newman_best_modularity(
+            G,
+            max_levels=args.max_levels,
+            progress_callback=progress_callback
+        )
+        
+        print(f"\n✅ Completed in {result.elapsed_seconds:.1f} seconds")
+        print(f"   Levels evaluated: {result.levels_evaluated}")
+        print(f"   Best modularity: {result.modularity:.4f}")
+        print(f"   Communities found: {result.num_communities}")
+        
+        # Convert to DataFrame
+        communities_df = partition_to_communities_df(result.partition, G)
+        
+        # Build edges DataFrame
+        papers_in_graph = papers_df[papers_df['id'].isin(graph_nodes)]
+        edges_df = build_edges_dataframe(papers_in_graph)
+        
+        # Validate if requested
+        if args.test:
+            print("\n📋 Validating output...")
+            errors = []
+            
+            if communities_df['id'].duplicated().any():
+                dup_count = communities_df['id'].duplicated().sum()
+                errors.append(f"Found {dup_count} duplicate IDs")
+            
+            output_ids = set(communities_df['id'])
+            missing = graph_nodes - output_ids
+            if missing:
+                errors.append(f"Missing {len(missing)} node IDs from output")
+            
+            communities = sorted(communities_df['community'].unique())
+            expected = list(range(len(communities)))
+            if communities != expected:
+                errors.append(f"Community labels not consecutive: got {communities[:10]}...")
+            
+            if errors:
+                print("❌ Validation failed:")
+                for err in errors:
+                    print(f"   - {err}")
+                import sys
+                sys.exit(1)
+            
+            print("✅ Validation passed!")
+            print(f"   - {len(communities_df)} unique paper IDs")
+            print(f"   - {len(communities)} communities (0 to {len(communities)-1})")
+        
+        # Save outputs
+        output_path = Path(args.output) if args.output else DATA_DIR / "communities_gn.csv"
+        
+        print(f"\n💾 Saving outputs...")
+        save_communities_csv(communities_df, output_path)
+        print(f"   Communities: {output_path}")
+        
+        edges_path = output_path.parent / "edges.csv"
+        save_edges_csv(edges_df, edges_path)
+        print(f"   Edges: {edges_path}")
+        
+        meta_path = output_path.with_suffix(".json").with_name(
+            output_path.stem + "_meta.json"
+        )
+        save_metadata_json(result, meta_path)
+        print(f"   Metadata: {meta_path}")
     
     print("\n" + "=" * 60)
     print("Done! Load results in UI: streamlit run app.py")
