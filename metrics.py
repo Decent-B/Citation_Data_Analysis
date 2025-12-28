@@ -3,19 +3,6 @@ Community Detection Evaluation Metrics
 
 This module provides functions to load community detection results and calculate
 evaluation metrics comparing predicted clusters to ground truth.
-
-Usage Examples:
-    # External indices (with ground truth)
-    >>> results = calculate_external_indices('preds.csv', 'truth.csv')
-    
-    # Internal indices - basic stats only (no graph loading)
-    >>> results = calculate_internal_indices('communities.csv', n_edges=5_438_287)
-    
-    # Internal indices - full metrics with graph loading
-    >>> results = calculate_internal_indices('communities.csv', 'edges.csv')
-    
-    # Internal indices - sampled graph for large datasets
-    >>> results = calculate_internal_indices('communities.csv', 'edges.csv', max_edges=1_000_000)
 """
 
 import pandas as pd
@@ -31,7 +18,14 @@ from sklearn.metrics import (
     fowlkes_mallows_score
 )
 from sklearn.metrics.cluster import contingency_matrix
-
+import random
+def sample_graph_nodes(G: nx.Graph, max_nodes: int, seed: int) -> nx.Graph:
+    if G.number_of_nodes() <= max_nodes:
+        return G
+    random.seed(seed)
+    sampled_nodes = random.sample(list(G.nodes()), max_nodes)
+    print(f"Sampled {len(sampled_nodes)} nodes from {G.number_of_nodes()} total nodes")
+    return G.subgraph(sampled_nodes).copy()
 
 def load_community_labels(filepath: Union[str, Path]) -> pd.DataFrame:
     """
@@ -812,7 +806,8 @@ def calculate_internal_indices_from_dataframe(
     
     # Load graph from dataframe
     G = load_graph_from_dataframe(edges_df, max_edges=max_edges)
-    
+    G = sample_graph_nodes(G, 3000, 42)
+
     # Filter to nodes that exist in the graph
     communities_dict = {node: comm for node, comm in communities_dict.items() if node in G}
     
@@ -973,16 +968,36 @@ def calculate_external_indices(
 
 if __name__ == "__main__":
     # Example usage
-    preds_path = Path("results/leiden_communities.csv")
-    ground_truth_path = Path("results/ground_truth_communities.csv")
+    TARGET_TOPICS_DEFAULT = [
+        "T10036", "T10320", "T10775", "T11273", "T11714", "T11307", "T11652", "T11512",
+        "T10203", "T10538", "T12016", "T10028", "T12026", "T11396", "T11636", "T14414",
+        "T10906", "T10100", "T10963", "T10848", "T10050", "T11975", "T12101", "T11612",
+        "T10181", "T11710", "T11550", "T10664", "T12031", "T10201", "T10860", "T13083",
+        "T13629", "T12380", "T12262", "T10531", "T11105", "T12923", "T14339", "T10627",
+        "T10824", "T10601", "T10057", "T11448", "T11094", "T10331", "T10052", "T11659",
+        "T10688", "T11019", "T11165", "T12549", "T10719", "T10812", "T10260", "T10430",
+        "T12490", "T10743", "T11450", "T11675", "T12127", "T12423", "T10317", "T10101",
+        "T14067", "T11181", "T11106", "T11719", "T11986", "T13650", "T13398", "T10799",
+        "T11891", "T14280", "T11937", "T14201", "T11478", "T10715", "T10772", "T10054",
+        "T10273", "T12222", "T10575", "T10125", "T11458", "T11409", "T10080", "T10711",
+        "T10651", "T10714", "T10742", "T10796", "T11896", "T11932", "T12791", "T12024",
+        "T10138", "T12216", "T12326", "T10237", "T10951", "T10400", "T10734", "T11045",
+        "T10764", "T11504", "T11800", "T11644", "T11241", "T12122", "T11598", "T13999",
+        "T10927", "T10270", "T13913", "T10462", "T10586", "T10653", "T10879", "T10191",
+        "T10326", "T10709", "T10868", "T10888", "T10648", "T10789", "T11024", "T11938",
+        "T13985", "T11572", "T11499", "T12885", "T10953", "T10350", "T10912", "T11446",
+        "T14380", "T10712", "T13673", "T13166", "T12289", "T12863", "T10102", "T13976",
+    ]
+    preds_path = Path("results/checkpoint_level_10.csv")
+    # ground_truth_path = Path("results/ground_truth_communities.csv")
     
-    results = calculate_external_indices(preds_path, ground_truth_path, verbose=True)
+    # results = calculate_external_indices(preds_path, ground_truth_path, verbose=True)
 
     # Calculate full internal metrics by loading the graph (5.4M edges)
     print("Loading edges from database...")
     from utils import extract_edges_from_db
     
-    edges_df = extract_edges_from_db(verbose=True)
+    edges_df = extract_edges_from_db(topics=TARGET_TOPICS_DEFAULT, verbose=True)
     
     print("\nCalculating internal indices...")
     
