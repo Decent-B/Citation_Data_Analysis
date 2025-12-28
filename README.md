@@ -46,29 +46,29 @@ The UI provides two main features:
 
 ## Girvan-Newman Community Detection
 
-The Girvan-Newman algorithm is implemented in `community_detection.py` (separate from the UI).
+The Girvan-Newman algorithm is implemented in `scripts/community_detection.py`.
 The algorithm is run via command line to generate CSV files, which are then loaded by the Streamlit UI for visualization.
 
 ### Via Command Line
 
 ```bash
 # Run with defaults
-python community_detection.py
+python scripts/community_detection.py
 
 # Quick test on 200 papers
-python community_detection.py --limit 200 --test
+python scripts/community_detection.py --limit 200 --test
 
 # Custom database path
-python community_detection.py --db-path /path/to/custom/works.db
+python scripts/community_detection.py --db-path /path/to/custom/works.db
 
 # Custom parameters
-python community_detection.py --max-levels 100 --max-nodes 5000
+python scripts/community_detection.py --max-levels 100 --max-nodes 5000
 
 # Filter by topic
-python community_detection.py --topic T10181
+python scripts/community_detection.py --topic T10181
 
 # Verbose output
-python community_detection.py --verbose
+python scripts/community_detection.py --verbose
 ```
 
 ### Via Streamlit UI
@@ -189,20 +189,26 @@ See `example_metrics.py` for detailed examples including comparing multiple algo
 ```
 .
 ├── app.py                      # Streamlit UI entry point
-├── community_detection.py     # Girvan-Newman algorithm (CLI + library)
-├── metrics.py                  # Community detection evaluation metrics
-├── example_metrics.py          # Usage examples for metrics module
-├── ui/                         # UI components (CSV loading & visualization only)
+├── main.py                     # Main application entry
+├── scripts/                    # Utility scripts
+│   ├── community_detection.py # Girvan-Newman community detection (CLI)
+│   └── metrics.py             # Community detection evaluation metrics
+├── notebooks/                  # Jupyter notebooks for analysis
+│   └── ranking.ipynb          # Ranking algorithms exploration
+├── ui/                         # Streamlit UI components
 │   ├── search_tab.py          # Search interface
 │   ├── community_tab.py       # Community detection visualization
 │   ├── search.py              # Search algorithms
 │   └── data_access.py         # Data loading utilities (SQLite, CSV)
-├── data_scraping/             # OpenAlex scraper
+├── data_scraping/             # OpenAlex data collection
 │   ├── openalex_scraper.py   # Main scraper
-│   └── utils.py              # Helper functions (API calls)
+│   └── utils.py              # API helper functions
+├── ranking/                   # Ranking algorithms module
+│   ├── pagerank.py           # PageRank implementations
+│   ├── search.py             # Search functions
+│   └── utils.py              # Utility functions
 ├── data/                      # Data files (gitignored)
 │   └── openalex_works.db     # SQLite database
-├── citation_pagerank.ipynb   # Analysis notebook
 └── pyproject.toml            # Dependencies
 ```
 

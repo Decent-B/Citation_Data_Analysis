@@ -1,7 +1,7 @@
 """Community detection tab UI implementation.
 
 This module handles loading and visualizing pre-computed community detection results.
-The actual algorithms are implemented in community_detection.py (root level).
+The actual algorithms are implemented in scripts/community_detection.py.
 """
 
 import streamlit as st
@@ -145,9 +145,9 @@ def render_community_tab(papers_df: pd.DataFrame):
     
     This tab loads pre-computed community detection results from CSV files.
     To generate new results, run the community_detection.py script:
-        python community_detection.py
+        python scripts/community_detection.py
     Or use the CLI script:
-        python scripts/run_community_detection.py --algorithm gn
+        python scripts/community_detection.py --algorithm gn
     
     Args:
         papers_df: Pre-loaded papers metadata DataFrame
@@ -167,9 +167,9 @@ def render_community_tab(papers_df: pd.DataFrame):
         
         **Girvan-Newman:**
         ```bash
-        python community_detection.py
+        python scripts/community_detection.py
         # Or with options:
-        python community_detection.py --max-levels 50 --limit 500
+        python scripts/community_detection.py --max-levels 50 --limit 500
         ```
         
         **Expected output files:**
@@ -191,7 +191,7 @@ def render_community_tab(papers_df: pd.DataFrame):
                     f"- `data/communities_kl.csv` (Kernighan-Lin)\n"
                     f"- `data/communities_louvain.csv` (Louvain)\n"
                     f"- `data/communities.csv` (fallback)\n\n"
-                    f"Run `python community_detection.py` to generate results."
+                    f"Run `python scripts/community_detection.py` to generate results."
                 )
                 return
             
