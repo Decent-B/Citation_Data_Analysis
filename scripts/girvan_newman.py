@@ -1,18 +1,16 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
-Single-file Girvan–Newman runner for OpenAlex citation data (SQLite).
+Single-file Girvan-Newman runner for OpenAlex citation data (SQLite).
 
 - Loads up to PAPERS_PER_TOPIC papers per topic (top by cited_by_count) using a window function.
 - Builds a citation graph (undirected by default) from referenced_works.
 - Optional: keep only largest connected component.
 - Optional: sample to MAX_NODES to prevent memory/time blowups.
-- Runs Girvan–Newman up to MAX_LEVELS and selects the best modularity partition.
+- Runs Girvan-Newman up to MAX_LEVELS and selects the best modularity partition.
 - Writes:
-    - gn_communities.csv  (paper_id, cluster_id, topic)
+    - gn_communities.csv  (paper_id, cluster_id)
     - edges.csv           (source_id, target_id)
     - gn_meta.json        (run metadata)
+    - checkpoints/        (intermediate results saved periodically)
 """
 
 import argparse
@@ -20,6 +18,7 @@ import json
 import os
 import random
 import sqlite3
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +45,7 @@ USE_LARGEST_COMPONENT_DEFAULT = True
 UNDIRECTED_DEFAULT = True
 FILTER_REFERENCES_TO_LOADED_PAPERS_DEFAULT = True
 RANDOM_SEED_DEFAULT = 42
+CHECKPOINT_INTERVAL_DEFAULT = 10  # Save checkpoint every N levels
 
 # Your topics list (paste/edit as needed)
 TARGET_TOPICS_DEFAULT: List[str] = [
@@ -130,6 +130,9 @@ def load_papers_by_topics_snippet_style(
 
     placeholders = ", ".join(["?" for _ in topics])
 
+    print(f"  Executing SQL query for {len(topics)} topics...")
+    t0 = time.time()
+    
     df = pd.read_sql_query(
         f"""
         SELECT *
@@ -144,6 +147,9 @@ def load_papers_by_topics_snippet_style(
         conn,
         params=(*topics, papers_per_topic),
     )
+
+    elapsed = time.time() - t0
+    print(f"  SQL query completed in {elapsed:.2f}s, fetched {len(df)} rows")
 
     if "row_num" in df.columns:
         df = df.drop("row_num", axis=1)
@@ -166,6 +172,9 @@ def build_citation_graph_from_df(
     if missing:
         raise ValueError(f"Missing required columns for graph build: {sorted(missing)}")
 
+    t0 = time.time()
+    print(f"  Building {'undirected' if undirected else 'directed'} graph...")
+    
     if undirected:
         G: nx.Graph = nx.Graph()
     else:
@@ -174,10 +183,16 @@ def build_citation_graph_from_df(
     df_ids = df["id"].astype(str).tolist()
     paper_ids = set(df_ids)
 
+    print(f"  Adding {len(df_ids)} nodes...")
     G.add_nodes_from(df_ids)
 
+    print(f"  Processing citations from {len(df_ids)} papers...")
     edges: List[Tuple[str, str]] = []
-    for src, refs in zip(df_ids, df["referenced_works_parsed"].tolist()):
+    refs_list = df["referenced_works_parsed"].tolist()
+    
+    for idx, (src, refs) in enumerate(zip(df_ids, refs_list)):
+        if idx > 0 and idx % 5000 == 0:
+            print(f"    Processed {idx}/{len(df_ids)} papers, {len(edges)} edges so far...")
         if not refs:
             continue
         for dst in refs:
@@ -188,7 +203,11 @@ def build_citation_graph_from_df(
                 continue
             edges.append((src, d))
 
+    print(f"  Adding {len(edges)} edges to graph...")
     G.add_edges_from(edges)
+    
+    elapsed = time.time() - t0
+    print(f"  Graph built in {elapsed:.2f}s: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     return G
 
 
@@ -227,13 +246,15 @@ class GNResult:
 def girvan_newman_best_modularity(
     G: nx.Graph,
     max_levels: int,
+    checkpoint_dir: Optional[Path] = None,
+    checkpoint_interval: int = 10,
 ) -> Tuple[List[Tuple[str, ...]], GNResult]:
     """
     Runs Girvan–Newman, evaluates modularity at each level up to max_levels,
     and returns the best partition (highest modularity).
+    
+    Optionally saves checkpoints every checkpoint_interval levels.
     """
-    import time
-
     t0 = time.time()
 
     # Edge cases
@@ -255,17 +276,25 @@ def girvan_newman_best_modularity(
         )
         return part, meta
 
+    print(f"  Starting Girvan-Newman on graph with {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+    print(f"  Will evaluate up to {max_levels} levels...")
+    
     comp_gen = girvan_newman(G)
 
     best_partition: Optional[List[Tuple[str, ...]]] = None
     best_Q = float("-inf")
     best_level = 0
+    
+    level_times = []
 
     # Level indexing: first yielded partition is level=1 (2 communities typically)
     for level in range(1, max_levels + 1):
+        level_start = time.time()
+        
         try:
             communities = next(comp_gen)
         except StopIteration:
+            print(f"  GN algorithm converged at level {level-1} (no more divisions possible)")
             break
 
         part_list = [tuple(map(str, c)) for c in communities]
@@ -277,10 +306,29 @@ def girvan_newman_best_modularity(
             # if modularity computation fails for some reason, skip
             continue
 
+        level_time = time.time() - level_start
+        level_times.append(level_time)
+        
+        # Calculate time estimate
+        avg_time = sum(level_times) / len(level_times)
+        remaining_levels = max_levels - level
+        est_remaining = avg_time * remaining_levels
+        
+        status = "" if Q <= best_Q else " (NEW BEST)"
+        print(f"  Level {level}/{max_levels}: {len(part_list)} communities, Q={Q:.6f}{status} "
+              f"[{level_time:.2f}s, est. remaining: {est_remaining:.1f}s]")
+
         if Q > best_Q:
             best_Q = Q
             best_partition = part_list
             best_level = level
+        
+        # Save checkpoint
+        if checkpoint_dir and checkpoint_interval > 0 and level % checkpoint_interval == 0:
+            checkpoint_file = checkpoint_dir / f"checkpoint_level_{level}.csv"
+            checkpoint_df = partition_to_df(part_list)
+            checkpoint_df.to_csv(checkpoint_file, index=False)
+            print(f"  [CHECKPOINT] Saved to {checkpoint_file.name}")
 
     if best_partition is None:
         # fallback: single community
@@ -288,13 +336,16 @@ def girvan_newman_best_modularity(
         best_Q = 0.0
         best_level = 0
 
+    total_time = time.time() - t0
+    print(f"  Girvan-Newman complete: best modularity Q={best_Q:.6f} at level {best_level} ({total_time:.2f}s total)")
+    
     meta = GNResult(
         best_level=best_level,
         best_modularity=float(best_Q),
         num_communities=len(best_partition),
         num_nodes=G.number_of_nodes(),
         num_edges=G.number_of_edges(),
-        elapsed_seconds=time.time() - t0,
+        elapsed_seconds=total_time,
     )
     return best_partition, meta
 
@@ -337,6 +388,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-filter-refs", action="store_true", default=not FILTER_REFERENCES_TO_LOADED_PAPERS_DEFAULT,
                    help="Do NOT filter references to only loaded papers (default: filter enabled)")
     p.add_argument("--seed", type=int, default=RANDOM_SEED_DEFAULT, help="Random seed for sampling (default: %(default)s)")
+    p.add_argument("--checkpoint-interval", type=int, default=CHECKPOINT_INTERVAL_DEFAULT, help="Save checkpoint every N levels (default: %(default)s, 0=disable)")
     p.add_argument("--topics-file", default="", help="Optional: path to a text file of topics (one per line). If set, overrides default topics list.")
     p.add_argument("--topics", default="", help="Optional: comma-separated topics. If set, overrides default topics list.")
     return p.parse_args()
@@ -401,41 +453,63 @@ def main() -> None:
     for t in topics:
         print(f"  {t}: {counts.get(t, 0)}")
 
-    # Parse references
+    print("-" * 60)
+    print("Parsing references...")
+    t_parse = time.time()
     df["id"] = df["id"].astype(str)
     df["referenced_works_parsed"] = df["referenced_works"].apply(parse_referenced_works)
+    print(f"References parsed in {time.time() - t_parse:.2f}s")
 
     # Build graph
+    print("-" * 60)
+    print("Building citation graph...")
+    t_graph = time.time()
     G = build_citation_graph_from_df(
         df[["id", "referenced_works_parsed"]],
         undirected=undirected,
         filter_references_to_loaded_papers=filter_refs,
     )
+    print(f"Graph building completed in {time.time() - t_graph:.2f}s")
 
     print("-" * 60)
-    print(f"Graph built: nodes={G.number_of_nodes()} edges={G.number_of_edges()}")
+    print(f"Initial graph: nodes={G.number_of_nodes()} edges={G.number_of_edges()}")
 
     # Keep largest component
     if args.largest_component:
+        print("Extracting largest connected component...")
+        t_lcc = time.time()
         G = largest_connected_component(G)
+        print(f"Largest component extracted in {time.time() - t_lcc:.2f}s")
         print(f"After largest component: nodes={G.number_of_nodes()} edges={G.number_of_edges()}")
 
     # Sample if too big
     if args.max_nodes and G.number_of_nodes() > args.max_nodes:
+        print(f"Graph too large, sampling to {args.max_nodes} nodes...")
+        t_sample = time.time()
         G = sample_graph_nodes(G, args.max_nodes, args.seed)
-        print(f"After sampling to max_nodes: nodes={G.number_of_nodes()} edges={G.number_of_edges()}")
+        print(f"Sampling completed in {time.time() - t_sample:.2f}s")
+        print(f"After sampling: nodes={G.number_of_nodes()} edges={G.number_of_edges()}")
 
     # Run GN
     print("-" * 60)
     print("Running Girvan–Newman...")
-    partition, meta = girvan_newman_best_modularity(G, max_levels=args.max_levels)
+    checkpoint_dir = None
+    if args.checkpoint_interval > 0:
+        checkpoint_dir = out_dir / "checkpoints"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Checkpoints will be saved every {args.checkpoint_interval} levels to: {checkpoint_dir}")
+    
+    partition, meta = girvan_newman_best_modularity(
+        G, 
+        max_levels=args.max_levels,
+        checkpoint_dir=checkpoint_dir,
+        checkpoint_interval=args.checkpoint_interval
+    )
     print(f"Done. Best level={meta.best_level} best modularity={meta.best_modularity:.6f} "
           f"communities={meta.num_communities} elapsed={meta.elapsed_seconds:.2f}s")
 
-    # Communities DF + add topic label
+    # Communities DF (paper_id, cluster_id only)
     comm_df = partition_to_df(partition)
-    id_to_topic = dict(zip(df["id"], df["topic"]))
-    comm_df["topic"] = comm_df["paper_id"].map(id_to_topic)
 
     # Edges DF (for the final G used in GN)
     edges_df = edges_to_df(G)
