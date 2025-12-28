@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SQLITE_DB_PATH = os.getenv('SQLITE_DB_PATH', 'data/openalex_works-ver2.db')
+SQLITE_DB_PATH = os.getenv('SQLITE_DB_PATH', 'data/openalex_works.db')
 POSTGRES_CONFIG = {
     'host': os.getenv('POSTGRES_HOST', 'localhost'),
     'port': int(os.getenv('POSTGRES_PORT', 5432)),
