@@ -3,8 +3,9 @@ import json
 import time
 import threading
 from queue import Queue
-import sqlite3
 import signal
+
+from database.connection import get_connection
 
 API_URL = "https://api.openalex.org/works"
 FIELDS = ["id", "doi", "title", "apc_list_price", "topic", "topic_name",
@@ -14,7 +15,6 @@ FIELDS = ["id", "doi", "title", "apc_list_price", "topic", "topic_name",
 PER_PAGE_MAX = 200
 BUFFER_LIMIT = 5000  # number of works to buffer before flush
 CURSOR_FILE = "cursor_state.json"
-DB_FILE = "openalex_works.db"
 stop_scraping = False
 
 
@@ -42,39 +42,85 @@ def save_cursor(cursor:str):
         json.dump({"cursor": cursor}, f)
 
 
-# --- database setup ---
-def init_db():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+def insert_batch(conn, batch):
+    """
+    Insert a batch of papers into PostgreSQL.
+    Uses normalized schema: papers, paper_references, related_works tables.
+    """
     cur = conn.cursor()
-    _ = cur.execute("""
-        CREATE TABLE IF NOT EXISTS works (
-            id TEXT PRIMARY KEY,
-            doi TEXT,
-            title TEXT,
-            apc_list_price INTEGER,
-            topic TEXT,
-            topic_name TEXT,
-            referenced_works_count INTEGER,
-            referenced_works TEXT,
-            authors TEXT,
-            cited_by_count INTEGER,
-            publication_date TEXT,
-            related_works TEXT
-        )
-    """)
-    conn.commit()
-    return conn
-
-
-def insert_batch(conn:sqlite3.Connection, batch):
-    cur = conn.cursor()
-    _ = cur.executemany("""
-        INSERT OR REPLACE INTO works
-        (id, doi, title, apc_list_price, topic, topic_name,
-         referenced_works_count, referenced_works,
-         authors, cited_by_count, publication_date, related_works)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, batch)
+    
+    # Prepare data for papers table
+    papers_data = []
+    references_data = []
+    related_works_data = []
+    
+    for row in batch:
+        paper_id = row[0]
+        doi = row[1]
+        title = row[2]
+        apc_list_price = row[3]
+        topic = row[4]
+        # topic_name = row[5]  # Not in PostgreSQL schema
+        referenced_works_count = row[6]
+        referenced_works = json.loads(row[7]) if row[7] else []
+        authors = row[8]  # Already JSON string
+        cited_by_count = row[9]
+        publication_date = row[10]
+        related_works = json.loads(row[11]) if row[11] else []
+        
+        # Papers table data
+        papers_data.append((
+            paper_id,
+            doi,
+            title,
+            apc_list_price,
+            topic,
+            referenced_works_count,
+            cited_by_count,
+            publication_date,
+            authors  # JSONB in PostgreSQL
+        ))
+        
+        # Paper references data
+        for ref_id in referenced_works:
+            references_data.append((paper_id, ref_id))
+        
+        # Related works data
+        for related_id in related_works:
+            related_works_data.append((paper_id, related_id))
+    
+    # Insert papers with UPSERT
+    cur.executemany("""
+        INSERT INTO papers (id, doi, title, apc_list_price, topic, 
+                           referenced_works_count, cited_by_count, publication_date, authors)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            doi = EXCLUDED.doi,
+            title = EXCLUDED.title,
+            apc_list_price = EXCLUDED.apc_list_price,
+            topic = EXCLUDED.topic,
+            referenced_works_count = EXCLUDED.referenced_works_count,
+            cited_by_count = EXCLUDED.cited_by_count,
+            publication_date = EXCLUDED.publication_date,
+            authors = EXCLUDED.authors
+    """, papers_data)
+    
+    # Insert paper references (ignore conflicts)
+    if references_data:
+        cur.executemany("""
+            INSERT INTO paper_references (citing_paper_id, cited_paper_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """, references_data)
+    
+    # Insert related works (ignore conflicts)
+    if related_works_data:
+        cur.executemany("""
+            INSERT INTO related_works (paper_id, related_paper_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """, related_works_data)
+    
     conn.commit()
 
 
@@ -112,6 +158,7 @@ def fetcher(q):
 
     q.put(None)  # sentinel to stop processor
 
+
 def process_authors(authorships:list[dict]) -> list[str]: # pyright: ignore[reportMissingTypeArgument]
     author_ids = []
     for authorship in authorships:
@@ -124,6 +171,7 @@ def process_authors(authorships:list[dict]) -> list[str]: # pyright: ignore[repo
     if len(author_ids) == 0:
         print("Warning: No authors found in authorships:", authorships)
     return author_ids
+
 
 def processor(q, conn):
     buffer = []
@@ -167,7 +215,10 @@ def processor(q, conn):
 
 
 def main():
-    conn = init_db()
+    print("Connecting to PostgreSQL database...")
+    conn = get_connection()
+    print("Connected successfully.")
+    
     q = Queue(maxsize=10)
 
     t_fetch = threading.Thread(target=fetcher, args=(q,))

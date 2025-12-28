@@ -1,67 +1,59 @@
 """Data access layer for loading papers metadata and search results."""
 
 import pandas as pd
-import sqlite3
 from pathlib import Path
 from typing import Optional
-import os
+
+from database.connection import get_engine, test_connection
 
 DATA_DIR = Path("data")
-DB_FILE = os.path.join(DATA_DIR, "openalex_works.db")
+
 
 def load_papers_metadata() -> pd.DataFrame:
     """
-    Load paper metadata from SQLite database.
+    Load paper metadata from PostgreSQL database.
     
     Returns:
         DataFrame with columns: id, title, doi, publication_date
     """
-    if not os.path.exists(DB_FILE):
-        # Create placeholder if database doesn't exist
-        print("⚠️ Database not found, using placeholder data")
-        placeholder_df = pd.DataFrame({
-            'id': ['W1775749144', 'W2100837269', 'W2128635872'],
-            'title': [
-                'Protein measurement with the Folin phenol reagent',
-                'Cleavage of structural proteins during the assembly of the head of bacteriophage T4',
-                'A rapid and sensitive method for the quantitation of microgram quantities'
-            ],
-            'doi': ['10.1016/s0021-9258(19)52451-6', '10.1038/227680a0', '10.1006/abio.1976.9999'],
-            'publication_date': ['1951-11-01', '1970-08-01', '1976-05-07']
-        })
-        return placeholder_df
+    # Test connection first
+    if not test_connection():
+        # Return placeholder if database is not available
+        print("⚠️ Database not available, using placeholder data")
+        return _get_placeholder_data()
     
-    # Load from SQLite database
     try:
-        print(f"Accessing database at: {DB_FILE}")
-        conn = sqlite3.connect(DB_FILE)
-        try:
-            query = """
-                SELECT id, title, doi, publication_date
-                FROM works
-            """
-            df = pd.read_sql_query(query, conn)
-            
-            # Ensure id is string type
-            df['id'] = df['id'].astype(str)
-            
-            return df
-        finally:
-            conn.close()
+        print("Accessing PostgreSQL database...")
+        engine = get_engine()
+        query = """
+            SELECT id, title, doi, publication_date
+            FROM papers
+        """
+        df = pd.read_sql_query(query, engine)
+        
+        # Ensure id is string type
+        df['id'] = df['id'].astype(str)
+        
+        return df
     except Exception as e:
         # Database error - return placeholder
         print(f"⚠️ Database error: {e}. Using placeholder data")
-        placeholder_df = pd.DataFrame({
-            'id': ['W1775749144', 'W2100837269', 'W2128635872'],
-            'title': [
-                'Protein measurement with the Folin phenol reagent',
-                'Cleavage of structural proteins during the assembly of the head of bacteriophage T4',
-                'A rapid and sensitive method for the quantitation of microgram quantities'
-            ],
-            'doi': ['10.1016/s0021-9258(19)52451-6', '10.1038/227680a0', '10.1006/abio.1976.9999'],
-            'publication_date': ['1951-11-01', '1970-08-01', '1976-05-07']
-        })
-        return placeholder_df
+        return _get_placeholder_data()
+
+
+def _get_placeholder_data() -> pd.DataFrame:
+    """Return placeholder data when database is unavailable."""
+    return pd.DataFrame({
+        'id': ['W1775749144', 'W2100837269', 'W2128635872'],
+        'title': [
+            'Protein measurement with the Folin phenol reagent',
+            'Cleavage of structural proteins during the assembly of the head of bacteriophage T4',
+            'A rapid and sensitive method for the quantitation of microgram quantities'
+        ],
+        'doi': ['10.1016/s0021-9258(19)52451-6', '10.1038/227680a0', '10.1006/abio.1976.9999'],
+        'publication_date': ['1951-11-01', '1970-08-01', '1976-05-07']
+    })
+
 
 def get_papers_by_ids(papers_df: pd.DataFrame, ids: list[str]) -> pd.DataFrame:
     """
@@ -98,6 +90,7 @@ def get_papers_by_ids(papers_df: pd.DataFrame, ids: list[str]) -> pd.DataFrame:
             })
     
     return pd.DataFrame(results)
+
 
 def load_communities(algorithm: str) -> Optional[pd.DataFrame]:
     """
@@ -136,6 +129,7 @@ def load_communities(algorithm: str) -> Optional[pd.DataFrame]:
     
     return None
 
+
 def load_edges() -> Optional[pd.DataFrame]:
     """
     Load edge list for graph visualization.
@@ -149,10 +143,9 @@ def load_edges() -> Optional[pd.DataFrame]:
         return pd.read_csv(edges_file, dtype={'source_id': str, 'target_id': str})
     return None
 
+
 if __name__ == "__main__":
     # Test loading functions
     papers_df = load_papers_metadata()
     print("Papers Metadata:")
     print(papers_df.head())
-    
-

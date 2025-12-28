@@ -9,5 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# Folders
 data/
 cugraph_tutorial/
+results/
+
+# Data
+*.db
+*.json

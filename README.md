@@ -128,12 +128,70 @@ See `citation_pagerank.ipynb` for examples of:
 - Computing PageRank rankings
 - GPU-accelerated graph analysis with cuGraph
 
+## Community Detection Evaluation
+
+The `metrics.py` module provides tools to evaluate community detection algorithms by comparing predicted clusters against ground truth.
+
+### Available Metrics
+
+1. **AMI (Adjusted Mutual Information)**: Measures agreement between clusterings, adjusted for chance
+   - Range: [0, 1] (typically)
+   - 1.0 = perfect agreement, 0.0 = random
+
+2. **ARI (Adjusted Rand Index)**: Measures similarity between clusterings, adjusted for chance
+   - Range: [-1, 1]
+   - 1.0 = identical clustering, 0.0 = random
+
+3. **VI (Variation of Information)**: Measures distance between clusterings based on entropy
+   - Range: [0, log(N)]
+   - 0.0 = perfect agreement, higher = more different
+
+### Usage
+
+```python
+from metrics import evaluate_clustering
+
+# Evaluate a community detection algorithm
+results = evaluate_clustering(
+    preds_file='data/communities_louvain.csv',
+    ground_truth_file='data/communities_ground_truth.csv'
+)
+
+print(f"AMI: {results['ami']:.4f}")
+print(f"ARI: {results['ari']:.4f}")
+print(f"VI:  {results['vi']:.4f}")
+```
+
+**Individual metric functions:**
+
+```python
+from metrics import calculate_ami, calculate_ari, calculate_vi
+
+# Calculate metrics from numpy arrays
+ami = calculate_ami(predictions, ground_truth)
+ari = calculate_ari(predictions, ground_truth)
+vi = calculate_vi(predictions, ground_truth)
+```
+
+**CSV Format:**
+Community CSV files should have columns: `paper_id` (or `id`) and `cluster_id` (or `community`):
+```csv
+paper_id,cluster_id
+W1234567,0
+W2345678,0
+W3456789,1
+```
+
+See `example_metrics.py` for detailed examples including comparing multiple algorithms.
+
 ## Project Structure
 
 ```
 .
 ├── app.py                      # Streamlit UI entry point
 ├── community_detection.py     # Girvan-Newman algorithm (CLI + library)
+├── metrics.py                  # Community detection evaluation metrics
+├── example_metrics.py          # Usage examples for metrics module
 ├── ui/                         # UI components (CSV loading & visualization only)
 │   ├── search_tab.py          # Search interface
 │   ├── community_tab.py       # Community detection visualization
