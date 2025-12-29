@@ -20,6 +20,7 @@ from ranking.pagerank import (
 )
 from ranking.search import PaperSearcher, tokenize_query, count_keyword_matches
 from ranking.similarity import compute_cocitation_scores, find_related_papers
+from ranking.config import TARGET_TOPICS
 
 __version__ = "0.1.0"
 
@@ -44,5 +45,7 @@ __all__ = [
     # Utilities
     "clear_gpu_memory",
     "check_gpu_available",
+    # Config
+    "TARGET_TOPICS",
 ]
 

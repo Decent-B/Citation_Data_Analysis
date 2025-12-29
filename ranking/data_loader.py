@@ -139,11 +139,3 @@ def build_cugraph(target_topics: Union[str, List[str], None] = None):
     
     print(f"cuGraph graph constructed: {G_gpu.number_of_vertices()} vertices, {G_gpu.number_of_edges()} edges")
     return topic_df, edges_df, G_gpu, vid_df
-
-
-if __name__ == "__main__":
-    TARGET_TOPICS = ['T10078', 'T10001']  # Example topics
-
-    topic_df, edges_df = build_graph(TARGET_TOPICS)
-    print(topic_df.head())
-    print(edges_df.head())

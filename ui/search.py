@@ -1,7 +1,11 @@
-"""Search algorithm implementations."""
+"""Search algorithm implementations using PaperSearcher."""
 
 import pandas as pd
-from typing import List
+from typing import List, Tuple
+
+from ranking.search import PaperSearcher
+from ui.data_access import load_pagerank_scores
+
 
 def run_search(query: str, algorithm: str, k: int, papers_df: pd.DataFrame) -> List[str]:
     """
@@ -9,65 +13,90 @@ def run_search(query: str, algorithm: str, k: int, papers_df: pd.DataFrame) -> L
     
     Args:
         query: Search query string
-        algorithm: One of "BM25", "PageRank + BM25", "HITS"
+        algorithm: One of "Keyword Matches", "Keyword Matches + PageRank"
         k: Number of results to return
         papers_df: DataFrame containing paper metadata
         
     Returns:
         List of paper IDs
     """
-    # TODO: Replace with actual BM25/PageRank/HITS implementations
-    # For now, use different search strategies based on algorithm
-    
     if not query or query.strip() == "":
         return []
     
-    query_lower = query.lower()
+    topic_df = papers_df.copy()
+    if 'cited_by_count' not in topic_df.columns:
+        topic_df['cited_by_count'] = 0
     
-    # Different search strategies based on algorithm
-    if algorithm == "BM25":
-        print(f"Running BM25 search for query: {query}")
-        # BM25-like: Search primarily in titles with term frequency consideration
-        # matches = papers_df[
-        #     papers_df['title'].str.lower().str.contains(query_lower, na=False, regex=False)
-        # ].copy()
-        matches = papers_df.sample(n=k, random_state=42)        
-        # Sort by title length (shorter titles with match = higher relevance)
-        if len(matches) > 0:
-            matches['title_len'] = matches['title'].str.len()
-            matches = matches.sort_values('title_len')  # type: ignore
+    if algorithm == "Keyword Matches":
+        searcher = PaperSearcher(topic_df)
+        results_df = searcher.search_by_keywords(query, top_k=k)
+        return results_df['paper_id'].tolist() if len(results_df) > 0 else []
+    
+    elif algorithm == "Keyword Matches + PageRank":
+        pagerank_scores = load_pagerank_scores()
         
-    elif algorithm == "PageRank + BM25":
-        print(f"Running PageRank + BM25 search for query: {query}")
-        # PageRank + BM25: Search in title and favor highly cited papers
-        matches = papers_df.sample(n=k, random_state=42)        
+        if pagerank_scores is None:
+            searcher = PaperSearcher(topic_df)
+            results_df = searcher.search_by_keywords(query, top_k=k)
+        else:
+            searcher = PaperSearcher(topic_df, pagerank_scores=pagerank_scores)
+            results_df = searcher.search_with_pagerank(query, keyword_threshold=1, top_k=k)
         
-        # Simulate PageRank by sorting by publication date (older papers often more cited)
-        if len(matches) > 0:
-            matches['pub_date'] = pd.to_datetime(matches['publication_date'], errors='coerce')
-            matches = matches.sort_values('pub_date', na_position='last')  # type: ignore
-        
-    elif algorithm == "HITS":
-        print(f"Running HITS search for query: {query}")
-        # HITS: Search across all fields (broader search)
-        matches = papers_df.sample(n=k, random_state=42)        
+        return results_df['paper_id'].tolist() if len(results_df) > 0 else []
+    
     else:
-        # Default fallback
-        matches = papers_df.sample(n=k, random_state=42)        
+        searcher = PaperSearcher(topic_df)
+        results_df = searcher.search_by_keywords(query, top_k=k)
+        return results_df['paper_id'].tolist() if len(results_df) > 0 else []
+
+
+def run_both_searches(query: str, k: int, papers_df: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """
+    Run BOTH search algorithms simultaneously and return results.
     
-    # Return top-k results
-    result_ids = matches['id'].head(k).tolist()
+    This is more efficient than calling run_search twice because:
+    - The PaperSearcher is only created once
+    - PageRank scores are loaded only once
     
-    # If we don't have enough matches, pad with random papers
-    if len(result_ids) < k:
-        remaining = papers_df[~papers_df['id'].isin(result_ids)]
-        if len(remaining) > 0:
-            # Use different random seeds for different algorithms to show variation
-            seed = {'BM25': 42, 'PageRank + BM25': 123, 'HITS': 456}.get(algorithm, 42)
-            additional = remaining['id'].sample(
-                min(k - len(result_ids), len(remaining)),
-                random_state=seed
-            ).tolist()
-            result_ids.extend(additional)
+    Args:
+        query: Search query string
+        k: Number of results to return
+        papers_df: DataFrame containing paper metadata
+        
+    Returns:
+        Tuple of (keyword_results, pagerank_results) where each is a list of paper IDs
+    """
+    if not query or query.strip() == "":
+        return [], []
     
-    return result_ids[:k]
+    # Prepare DataFrame
+    topic_df = papers_df.copy()
+    if 'cited_by_count' not in topic_df.columns:
+        topic_df['cited_by_count'] = 0
+    
+    # Load PageRank scores once
+    print(f"Running both algorithms for query: {query}")
+    pagerank_scores = load_pagerank_scores()
+    
+    # Create searcher with pagerank scores
+    if pagerank_scores is not None:
+        searcher = PaperSearcher(topic_df, pagerank_scores=pagerank_scores)
+    else:
+        searcher = PaperSearcher(topic_df)
+    
+    # Run Keyword Matches
+    keyword_df = searcher.search_by_keywords(query, top_k=k)
+    keyword_results = keyword_df['paper_id'].tolist() if len(keyword_df) > 0 else []
+    
+    # Run PageRank search (uses same searcher)
+    if pagerank_scores is not None:
+        pagerank_df = searcher.search_with_pagerank(query, keyword_threshold=1, top_k=k)
+        pagerank_results = pagerank_df['paper_id'].tolist() if len(pagerank_df) > 0 else []
+    else:
+        # Fallback to keyword search if no PageRank available
+        pagerank_results = keyword_results
+    
+    print(f"  Keyword Matches: {len(keyword_results)} results")
+    print(f"  PageRank: {len(pagerank_results)} results")
+    
+    return keyword_results, pagerank_results

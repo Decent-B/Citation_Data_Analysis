@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from ranking.data_loader import load_topic_data, build_cugraph
 from ranking.search import PaperSearcher
 from ranking.pagerank import PageRankResult, run_pagerank, track_pagerank_convergence
+from ranking.config import TARGET_TOPICS
 
 
 def plot_convergence(convergence_history: list, save_path: str) -> None:
@@ -20,7 +21,7 @@ def plot_convergence(convergence_history: list, save_path: str) -> None:
     
     plt.plot(iterations, convergence_history, 'b-', linewidth=2, marker='o', markersize=3)
     plt.xlabel('Iteration', fontsize=12)
-    plt.ylabel('L1 Difference (Sum of Absolute Changes)', fontsize=12)
+    plt.ylabel('Difference from Previous Iteration', fontsize=12)
     plt.title('PageRank Convergence', fontsize=14)
     plt.yscale('log')
     plt.grid(True, alpha=0.3)
@@ -43,7 +44,7 @@ if __name__ == '__main__':
     
     # Load data from PostgreSQL (topics are loaded via environment-configured connection)
     topic_df, edges_df, G_gpu, vid_df = build_cugraph(
-        target_topics=['T10078', 'T10001', 'T10018', 'T10030', 'T10017']
+        target_topics=TARGET_TOPICS
     )
     
     # Track PageRank convergence

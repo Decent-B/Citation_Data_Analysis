@@ -11,6 +11,7 @@ from pathlib import Path
 from ui.search_tab import render_search_tab
 from ui.community_tab import render_community_tab
 from ui.data_access import load_papers_metadata
+from ui.config import TARGET_TOPICS
 
 # Page configuration
 st.set_page_config(
@@ -40,7 +41,10 @@ def main():
     with col1:
         st.metric("Total Papers", f"{len(papers_df):,}")
     with col2:
-        st.metric("Data Source", "PostgreSQL" if len(papers_df) > 3 else "Placeholder")
+        # Show data source: 5 topics vs placeholder
+        topics_loaded = len(papers_df['topic'].unique()) if 'topic' in papers_df.columns else 0
+        data_source = f"{topics_loaded} Topics" if topics_loaded > 1 else "Placeholder"
+        st.metric("Data Source", data_source)
     
     st.markdown("---")
     
