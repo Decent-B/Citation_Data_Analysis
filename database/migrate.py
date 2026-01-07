@@ -101,6 +101,7 @@ def load_community_paper_ids() -> Set[str]:
     Looks for:
     - results/checkpoint_level_10.csv (Girvan-Newman)
     - results/leiden_communities.csv (Leiden)
+    - results/leiden_communities_small.csv (Leiden)
     
     Returns:
         Set of paper IDs that appear in either community file
@@ -110,7 +111,8 @@ def load_community_paper_ids() -> Set[str]:
     paper_ids = set()
     community_files = [
         Path('results/checkpoint_level_10.csv'),
-        Path('results/leiden_communities.csv')
+        Path('results/leiden_communities.csv'),
+        Path('results/leiden_communities_small.csv'),
     ]
     
     for file_path in community_files:

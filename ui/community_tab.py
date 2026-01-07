@@ -22,7 +22,7 @@ def load_community_file(algorithm: str) -> Optional[pd.DataFrame]:
         DataFrame with paper_id and cluster_id columns, or None if file not found
     """
     if algorithm == "Leiden":
-        file_path = Path("results/leiden_communities.csv")
+        file_path = Path("results/leiden_communities_small.csv")
     elif algorithm == "Girvan-Newman":
         file_path = Path("results/checkpoint_level_10.csv")
     else:
@@ -168,10 +168,13 @@ def create_community_graph(communities_df: pd.DataFrame, papers_df: pd.DataFrame
     if edges_df is None or len(edges_df) == 0:
         # Only extract edges if papers_df has referenced_works column
         if 'referenced_works' in papers_df.columns:
+            print(f"Extracting edges from papers_df for {len(valid_paper_ids)} valid papers...")
             edges_df = extract_edges_from_papers(papers_df, valid_paper_ids)
+            print(f"Extracted {len(edges_df)} edges between papers in the community")
         else:
             # Create empty edges DataFrame if column not available
             edges_df = pd.DataFrame(columns=['source_id', 'target_id'])
+            print("No 'referenced_works' column found in papers_df")
     
     # Create NetworkX graph for layout
     G = nx.Graph()
