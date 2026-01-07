@@ -65,9 +65,6 @@ These metrics evaluate partition quality based solely on graph structure:
 | Metric | Range | Interpretation | Description |
 |--------|-------|----------------|-------------|
 | **Modularity (Q)** | [-0.5, 1.0] | Higher is better | Measures how much more internally linked communities are compared to random expectation. Uses directed graph formulation for citation networks. |
-| **Coverage** | [0, 1] | Higher is better | Fraction of edges within communities (intra-community edges / total edges). Perfect score of 1.0 means all edges are internal. |
-| **Performance** | [0, 1] | Higher is better | Fraction of correctly classified node pairs (both connected within communities or disconnected between communities). |
-| **Average Conductance** | [0, 1] | Lower is better | Average fraction of edges leaving each community. Lower values indicate better isolation of communities. |
 
 
 ### External Indices (Require Ground Truth)

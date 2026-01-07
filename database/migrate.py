@@ -6,7 +6,13 @@ Migrates paper citation data from SQLite database to PostgreSQL.
 Handles the transformation of JSON array fields to normalized tables.
 
 Usage:
-    python database/migrate.py [--batch-size BATCH_SIZE]
+    python database/migrate.py [--batch-size BATCH_SIZE] [--filter-communities]
+    
+Options:
+    --batch-size: Number of rows to process per batch (default: 10000)
+    --skip-indexes: Skip creating indexes after migration
+    --filter-communities: Only migrate papers in community detection results
+                         (results/checkpoint_level_10.csv or results/leiden_communities.csv)
 """
 
 import os
@@ -15,7 +21,8 @@ import json
 import sqlite3
 import argparse
 from datetime import datetime
-from typing import Generator, List, Tuple, Any
+from typing import Generator, List, Tuple, Any, Set
+from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import execute_values
@@ -87,15 +94,74 @@ def parse_date(date_str: str) -> str | None:
         return None
 
 
-def fetch_sqlite_rows(conn: sqlite3.Connection, batch_size: int) -> Generator[List[Tuple], None, None]:
-    """Fetch rows from SQLite in batches."""
+def load_community_paper_ids() -> Set[str]:
+    """
+    Load paper IDs from community detection result files.
+    
+    Looks for:
+    - results/checkpoint_level_10.csv (Girvan-Newman)
+    - results/leiden_communities.csv (Leiden)
+    
+    Returns:
+        Set of paper IDs that appear in either community file
+    """
+    import pandas as pd
+    
+    paper_ids = set()
+    community_files = [
+        Path('results/checkpoint_level_10.csv'),
+        Path('results/leiden_communities.csv')
+    ]
+    
+    for file_path in community_files:
+        if file_path.exists():
+            try:
+                df = pd.read_csv(file_path)
+                # Look for paper_id column
+                if 'paper_id' in df.columns:
+                    ids = df['paper_id'].astype(str).tolist()
+                    paper_ids.update(ids)
+                    print(f"  Loaded {len(ids):,} paper IDs from {file_path}")
+                else:
+                    print(f"  Warning: {file_path} does not have 'paper_id' column")
+            except Exception as e:
+                print(f"  Error loading {file_path}: {e}")
+        else:
+            print(f"  File not found: {file_path}")
+    
+    return paper_ids
+
+
+def fetch_sqlite_rows(conn: sqlite3.Connection, batch_size: int, filter_ids: Set[str] | None = None) -> Generator[List[Tuple], None, None]:
+    """
+    Fetch rows from SQLite in batches.
+    
+    Args:
+        conn: SQLite connection
+        batch_size: Number of rows to fetch per batch
+        filter_ids: Optional set of paper IDs to filter by. If provided, only these papers are fetched.
+    """
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, doi, title, apc_list_price, topic, 
-               referenced_works_count, referenced_works, authors,
-               cited_by_count, publication_date, related_works
-        FROM works
-    """)
+    
+    if filter_ids:
+        # Create a temporary table with the IDs we want
+        cursor.execute("CREATE TEMP TABLE filter_ids (id TEXT PRIMARY KEY)")
+        cursor.executemany("INSERT INTO filter_ids VALUES (?)", [(id,) for id in filter_ids])
+        
+        cursor.execute("""
+            SELECT w.id, w.doi, w.title, w.apc_list_price, w.topic, 
+                   w.referenced_works_count, w.referenced_works, w.authors,
+                   w.cited_by_count, w.publication_date, w.related_works
+            FROM works w
+            INNER JOIN filter_ids f ON w.id = f.id
+        """)
+    else:
+        cursor.execute("""
+            SELECT id, doi, title, apc_list_price, topic, 
+                   referenced_works_count, referenced_works, authors,
+                   cited_by_count, publication_date, related_works
+            FROM works
+        """)
     
     while True:
         rows = cursor.fetchmany(batch_size)
@@ -234,6 +300,8 @@ def main():
                         help=f'Batch size for inserts (default: {DEFAULT_BATCH_SIZE})')
     parser.add_argument('--skip-indexes', action='store_true',
                         help='Skip creating indexes after migration')
+    parser.add_argument('--filter-communities', action='store_true',
+                        help='Only migrate papers that appear in community detection results')
     args = parser.parse_args()
     
     print("=" * 60)
@@ -242,7 +310,26 @@ def main():
     print(f"Source: {SQLITE_DB_PATH}")
     print(f"Target: {POSTGRES_CONFIG['host']}:{POSTGRES_CONFIG['port']}/{POSTGRES_CONFIG['database']}")
     print(f"Batch size: {args.batch_size}")
+    print(f"Filter by communities: {args.filter_communities}")
     print()
+    
+    # Load community paper IDs if filtering is enabled
+    filter_ids = None
+    if args.filter_communities:
+        print("Loading paper IDs from community detection results...")
+        filter_ids = load_community_paper_ids()
+        if not filter_ids:
+            print("Warning: No paper IDs found in community files!")
+            print("Expected files:")
+            print("  - results/checkpoint_level_10.csv")
+            print("  - results/leiden_communities.csv")
+            response = input("Continue without filtering? (y/n): ")
+            if response.lower() != 'y':
+                print("Migration cancelled.")
+                sys.exit(0)
+        else:
+            print(f"Found {len(filter_ids):,} unique paper IDs to migrate")
+            print()
     
     # Connect to databases
     print("Connecting to SQLite...")
@@ -253,8 +340,12 @@ def main():
     
     # Get total count for progress reporting
     sqlite_cursor = sqlite_conn.cursor()
-    sqlite_cursor.execute("SELECT COUNT(*) FROM works")
-    total_rows = sqlite_cursor.fetchone()[0]
+    if filter_ids:
+        # Count only filtered papers
+        total_rows = len(filter_ids)
+    else:
+        sqlite_cursor.execute("SELECT COUNT(*) FROM works")
+        total_rows = sqlite_cursor.fetchone()[0]
     print(f"Total rows to migrate: {total_rows:,}")
     print()
     
@@ -272,7 +363,7 @@ def main():
     batch_num = 0
     
     try:
-        for rows in fetch_sqlite_rows(sqlite_conn, args.batch_size):
+        for rows in fetch_sqlite_rows(sqlite_conn, args.batch_size, filter_ids):
             batch_num += 1
             papers, refs, related = migrate_batch(
                 pg_conn, rows, papers_cursor, refs_cursor, related_cursor
@@ -288,7 +379,7 @@ def main():
             # Progress report
             elapsed = (datetime.now() - start_time).total_seconds()
             rate = total_papers / elapsed if elapsed > 0 else 0
-            progress = (total_papers / total_rows) * 100
+            progress = (total_papers / total_rows) * 100 if total_rows > 0 else 0
             
             print(f"\rBatch {batch_num}: {total_papers:,}/{total_rows:,} papers "
                   f"({progress:.1f}%) | {total_refs:,} refs | {total_related:,} related | "
@@ -310,6 +401,9 @@ def main():
         print(f"Papers migrated: {total_papers:,}")
         print(f"References inserted: {total_refs:,}")
         print(f"Related works inserted: {total_related:,}")
+        
+        if args.filter_communities:
+            print(f"\n✓ Filtered to community papers only")
         
         # Verify counts
         pg_papers, pg_refs, pg_related = get_counts(pg_conn)

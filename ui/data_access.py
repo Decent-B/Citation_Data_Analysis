@@ -44,7 +44,7 @@ def load_papers_metadata() -> pd.DataFrame:
         return _get_placeholder_data()
     
     try:
-        print(f"Loading papers for topics: {TARGET_TOPICS}")
+        print("Loading ALL papers from database (not filtered by topics)")
         
         # Check if GPU is available
         gpu_available = check_gpu_available()
@@ -52,14 +52,16 @@ def load_papers_metadata() -> pd.DataFrame:
         if gpu_available:
             print("GPU available - using cuGraph for graph operations")
             # Use cuGraph for GPU-accelerated operations
-            topic_df, edges_df, G_gpu, vid_df = build_cugraph(TARGET_TOPICS)
+            # Pass None to load ALL papers instead of filtering by topics
+            topic_df, edges_df, G_gpu, vid_df = build_cugraph(None)
             # Cache the cuGraph objects for PageRank
             if G_gpu is not None:
                 _cugraph_cache = (G_gpu, vid_df)
         else:
             print("GPU not available - using CPU for graph operations")
             # Fall back to CPU
-            topic_df, edges_df = build_graph(TARGET_TOPICS)
+            # Pass None to load ALL papers instead of filtering by topics
+            topic_df, edges_df = build_graph(None)
         
         # Cache the edges for fallback PageRank computation
         _edges_cache = edges_df
@@ -77,7 +79,7 @@ def load_papers_metadata() -> pd.DataFrame:
         # Cache the result
         _papers_cache = topic_df
         
-        print(f"Loaded {len(topic_df)} papers from {len(TARGET_TOPICS)} topics")
+        print(f"Loaded {len(topic_df):,} papers from database")
         return topic_df
         
     except Exception as e:
@@ -296,7 +298,7 @@ def get_gpu_status() -> str:
 
 if __name__ == "__main__":
     # Test loading functions
-    print("Testing data access functions with CUDA PageRank...")
+    print("Testing data access functions...")
     print("=" * 60)
     
     # Check GPU status
@@ -304,11 +306,14 @@ if __name__ == "__main__":
     print()
     
     papers_df = load_papers_metadata()
-    print(f"\nPapers Metadata ({len(papers_df)} rows):")
+    print(f"\nPapers Metadata ({len(papers_df):,} rows):")
     print(papers_df.head())
-    print(f"\nTopics: {papers_df['topic'].unique().tolist()}")
+    if 'topic' in papers_df.columns:
+        print(f"\nUnique topics: {papers_df['topic'].nunique()}")
     
     pr_scores = load_pagerank_scores()
     if pr_scores is not None:
-        print(f"\nPageRank Scores ({len(pr_scores)} rows):")
+        print(f"\nPageRank Scores ({len(pr_scores):,} rows):")
         print(pr_scores.nlargest(5, 'pagerank'))
+    
+
